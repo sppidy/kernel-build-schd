@@ -11,6 +11,51 @@ use kernel_builder::error::Result;
 use kernel_builder::model::BuildRequest;
 
 #[test]
+fn config_file_loads_and_validates() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [scheduler]
+        concurrency = 1
+        default_timeout_secs = 60
+        shutdown_grace_secs = 5
+
+        [storage]
+        database_path = "/tmp/kbs.db"
+        workspace_root = "/tmp/kbs-work"
+        artifact_root = "/tmp/kbs-artifacts"
+        log_root = "/tmp/kbs-logs"
+        retention_days = 7
+
+        [security]
+        source_allowlist = ["/allowed"]
+        denied_env = ["LD_PRELOAD"]
+        max_log_read_bytes = 4096
+        enable_host_native = false
+
+        [runtime]
+        preference = "auto"
+        default_image = "image"
+        network_enabled = false
+        memory_limit = "4g"
+        cpu_limit = "2"
+
+        [mcp]
+        stdio_enabled = true
+        control_socket = "/tmp/kbs.sock"
+        "#,
+    )
+    .unwrap();
+
+    let config = kernel_builder::config::load_config(&path).unwrap();
+
+    assert_eq!(config.scheduler.concurrency, 1);
+    assert_eq!(config.security.source_allowlist.len(), 1);
+}
+
+#[test]
 fn control_messages_round_trip_json() {
     let request = ControlRequest::Status;
     let json = serde_json::to_string(&request).unwrap();

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 
@@ -119,4 +121,11 @@ impl Config {
         }
         Ok(())
     }
+}
+
+pub fn load_config(path: impl AsRef<Path>) -> Result<Config> {
+    let text = std::fs::read_to_string(path)?;
+    let config: Config = toml::from_str(&text)?;
+    config.validate()?;
+    Ok(config)
 }
