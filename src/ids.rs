@@ -1,6 +1,6 @@
-use std::{fmt, str::FromStr};
+use std::{borrow::Cow, fmt, str::FromStr};
 
-use schemars::{gen::SchemaGenerator, schema::Schema, JsonSchema};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -41,7 +41,7 @@ impl FromStr for JobId {
 }
 
 impl JsonSchema for JobId {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "JobId".into()
     }
 

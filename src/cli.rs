@@ -59,10 +59,7 @@ pub async fn run() -> anyhow::Result<()> {
             println!("daemon command scaffold active");
             Ok(())
         }
-        Command::Mcp => {
-            println!("mcp command scaffold active");
-            Ok(())
-        }
+        Command::Mcp => crate::mcp::serve_stdio().await,
         Command::Status => {
             println!("status command scaffold active");
             Ok(())
