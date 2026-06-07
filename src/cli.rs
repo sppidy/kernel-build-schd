@@ -55,10 +55,7 @@ pub async fn run() -> anyhow::Result<()> {
             println!("configuration command scaffold active");
             Ok(())
         }
-        Command::Daemon { foreground: _ } => {
-            println!("daemon command scaffold active");
-            Ok(())
-        }
+        Command::Daemon { foreground: _ } => crate::daemon::run_foreground().await,
         Command::Mcp => crate::mcp::serve_stdio().await,
         Command::Status => {
             println!("status command scaffold active");
