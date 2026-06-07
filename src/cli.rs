@@ -19,11 +19,31 @@ pub enum Command {
     },
     Mcp,
     Status,
+    Jobs {
+        #[command(subcommand)]
+        command: JobsCommand,
+    },
+    Logs {
+        #[command(subcommand)]
+        command: LogsCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
     Check,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum JobsCommand {
+    List,
+    Show { id: String },
+    Cancel { id: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LogsCommand {
+    Tail { id: String },
 }
 
 pub async fn run() -> anyhow::Result<()> {
@@ -45,6 +65,14 @@ pub async fn run() -> anyhow::Result<()> {
         }
         Command::Status => {
             println!("status command scaffold active");
+            Ok(())
+        }
+        Command::Jobs { command: _ } => {
+            println!("jobs command scaffold active");
+            Ok(())
+        }
+        Command::Logs { command: _ } => {
+            println!("logs command scaffold active");
             Ok(())
         }
     }
