@@ -1,1 +1,188 @@
+use std::path::Path;
 
+use rusqlite::{params, Connection};
+use time::OffsetDateTime;
+
+use crate::{
+    error::{Error, Result},
+    model::{BuildRequest, JobId, JobRecord, JobState},
+};
+
+pub struct Store {
+    conn: Connection,
+}
+
+impl Store {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        let store = Self { conn };
+        store.migrate()?;
+        Ok(store)
+    }
+
+    fn migrate(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS jobs (
+                id TEXT PRIMARY KEY,
+                request_json TEXT NOT NULL,
+                state TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                failure_json TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS job_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                event TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL
+            );
+            "#,
+        )?;
+        Ok(())
+    }
+
+    pub fn enqueue(&self, request: BuildRequest) -> Result<JobRecord> {
+        let id = JobId::new();
+        let now = OffsetDateTime::now_utc();
+        let record = JobRecord {
+            id,
+            request,
+            state: JobState::Queued,
+            created_at: now,
+            updated_at: now,
+            failure: None,
+        };
+        self.conn.execute(
+            "INSERT INTO jobs (id, request_json, state, created_at, updated_at, failure_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            params![
+                record.id.to_string(),
+                serde_json::to_string(&record.request)?,
+                state_name(record.state),
+                record.created_at.unix_timestamp_nanos().to_string(),
+                record.updated_at.unix_timestamp_nanos().to_string(),
+            ],
+        )?;
+        self.record_event(id, "queued")?;
+        Ok(record)
+    }
+
+    pub fn get_job(&self, id: JobId) -> Result<JobRecord> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, request_json, state, created_at, updated_at, failure_json
+                 FROM jobs WHERE id = ?1",
+                params![id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                },
+            )
+            .map_err(Error::from)?;
+
+        let (id_text, request_json, state_text, created_at, updated_at, failure_json) = row;
+        Ok(JobRecord {
+            id: id_text.parse()?,
+            request: serde_json::from_str(&request_json)?,
+            state: parse_state(&state_text)?,
+            created_at: parse_timestamp(&created_at)?,
+            updated_at: parse_timestamp(&updated_at)?,
+            failure: match failure_json {
+                Some(value) => Some(serde_json::from_str(&value)?),
+                None => None,
+            },
+        })
+    }
+
+    pub fn set_state(&self, id: JobId, next: JobState) -> Result<()> {
+        let current = self.get_job(id)?;
+        current.state.transition_to(next)?;
+        self.conn.execute(
+            "UPDATE jobs SET state = ?1, updated_at = ?2 WHERE id = ?3",
+            params![
+                state_name(next),
+                OffsetDateTime::now_utc().unix_timestamp_nanos().to_string(),
+                id.to_string()
+            ],
+        )?;
+        self.record_event(id, state_name(next))?;
+        Ok(())
+    }
+
+    pub fn events(&self, id: JobId) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT event FROM job_events WHERE job_id = ?1 ORDER BY id ASC")?;
+        let rows = stmt.query_map(params![id.to_string()], |row| row.get::<_, String>(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
+    }
+
+    fn record_event(&self, id: JobId, event: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO job_events (job_id, event, created_at) VALUES (?1, ?2, ?3)",
+            params![
+                id.to_string(),
+                event,
+                OffsetDateTime::now_utc().unix_timestamp_nanos().to_string()
+            ],
+        )?;
+        Ok(())
+    }
+}
+
+pub(crate) fn state_name(state: JobState) -> &'static str {
+    match state {
+        JobState::Queued => "queued",
+        JobState::Preparing => "preparing",
+        JobState::Running => "running",
+        JobState::Collecting => "collecting",
+        JobState::Succeeded => "succeeded",
+        JobState::Canceling => "canceling",
+        JobState::Canceled => "canceled",
+        JobState::Failed => "failed",
+        JobState::TimedOut => "timed_out",
+    }
+}
+
+fn parse_state(value: &str) -> Result<JobState> {
+    match value {
+        "queued" => Ok(JobState::Queued),
+        "preparing" => Ok(JobState::Preparing),
+        "running" => Ok(JobState::Running),
+        "collecting" => Ok(JobState::Collecting),
+        "succeeded" => Ok(JobState::Succeeded),
+        "canceling" => Ok(JobState::Canceling),
+        "canceled" => Ok(JobState::Canceled),
+        "failed" => Ok(JobState::Failed),
+        "timed_out" => Ok(JobState::TimedOut),
+        _ => Err(Error::Config(format!("unknown job state {value}"))),
+    }
+}
+
+fn parse_timestamp(value: &str) -> Result<OffsetDateTime> {
+    let nanos = value
+        .parse::<i128>()
+        .map_err(|err| Error::Config(format!("invalid timestamp: {err}")))?;
+    OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .map_err(|err| Error::Config(format!("invalid timestamp: {err}")))
+}
