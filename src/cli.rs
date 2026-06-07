@@ -56,7 +56,7 @@ pub async fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Daemon { foreground: _ } => crate::daemon::run_foreground().await,
-        Command::Mcp => crate::mcp::serve_stdio().await,
+        Command::Mcp => crate::mcp::serve_stdio("/tmp/kernel-builder/kbs.sock").await,
         Command::Status => {
             println!("status command scaffold active");
             Ok(())

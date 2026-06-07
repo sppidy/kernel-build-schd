@@ -1,7 +1,8 @@
 use kernel_builder::mcp::{
-    CancelBuildInput, GetArtifactManifestInput, GetBuildStatusInput, ListArtifactsInput,
-    ScheduleKernelBuildInput, TailBuildLogInput,
+    control_response_to_text, CancelBuildInput, GetArtifactManifestInput, GetBuildStatusInput,
+    ListArtifactsInput, ScheduleKernelBuildInput, TailBuildLogInput,
 };
+use kernel_builder::{control::ControlResponse, model::JobId};
 
 #[test]
 fn schedule_input_schema_contains_source_root_and_arch() {
@@ -44,4 +45,22 @@ fn artifact_inputs_use_job_id_strings() {
     };
 
     assert_eq!(manifest.job_id, list.job_id);
+}
+
+#[test]
+fn mcp_schedule_response_includes_job_id() {
+    let id = JobId::new();
+    let text = control_response_to_text(ControlResponse::Scheduled { id }).unwrap();
+
+    assert!(text.contains(&id.to_string()));
+}
+
+#[test]
+fn mcp_error_response_becomes_error_text() {
+    let text = control_response_to_text(ControlResponse::Error {
+        message: "policy denied".into(),
+    })
+    .unwrap();
+
+    assert!(text.contains("policy denied"));
 }
