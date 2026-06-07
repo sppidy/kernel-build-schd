@@ -1,5 +1,10 @@
 use kernel_builder::control::{ControlRequest, ControlResponse};
 use kernel_builder::daemon::DaemonHealth;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use kernel_builder::control::{serve_control_socket, ControlClient, ControlHandler};
+use kernel_builder::error::Result;
 
 #[test]
 fn control_messages_round_trip_json() {
@@ -34,4 +39,46 @@ fn daemon_health_reports_runtime_and_database() {
 
     assert!(health.database_ok);
     assert_eq!(health.runtime, "fake");
+}
+
+struct StatusHandler;
+
+#[async_trait]
+impl ControlHandler for StatusHandler {
+    async fn handle(&self, request: ControlRequest) -> Result<ControlResponse> {
+        match request {
+            ControlRequest::Status => Ok(ControlResponse::Status {
+                queued_jobs: 0,
+                active_jobs: 0,
+                runtime: "fake".into(),
+            }),
+            _ => Ok(ControlResponse::Error {
+                message: "unsupported in test".into(),
+            }),
+        }
+    }
+}
+
+#[tokio::test]
+async fn control_client_round_trips_status_over_unix_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("kbs.sock");
+    let server = tokio::spawn(serve_control_socket(
+        socket.clone(),
+        Arc::new(StatusHandler),
+    ));
+
+    let client = ControlClient::connect(&socket).await.unwrap();
+    let response = client.request(ControlRequest::Status).await.unwrap();
+
+    server.abort();
+
+    assert_eq!(
+        response,
+        ControlResponse::Status {
+            queued_jobs: 0,
+            active_jobs: 0,
+            runtime: "fake".into(),
+        }
+    );
 }
