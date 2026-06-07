@@ -137,6 +137,25 @@ impl Store {
             .map_err(Error::from)
     }
 
+    pub fn next_queued(&self) -> Result<Option<JobRecord>> {
+        let id_text = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM jobs WHERE state = 'queued' ORDER BY updated_at ASC LIMIT 1",
+            )?;
+            let mut rows = stmt.query([])?;
+            if let Some(row) = rows.next()? {
+                Some(row.get::<_, String>(0)?)
+            } else {
+                None
+            }
+        };
+
+        match id_text {
+            Some(value) => Ok(Some(self.get_job(value.parse()?)?)),
+            None => Ok(None),
+        }
+    }
+
     fn record_event(&self, id: JobId, event: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO job_events (job_id, event, created_at) VALUES (?1, ?2, ?3)",

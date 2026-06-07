@@ -1,5 +1,13 @@
 use kernel_builder::config::{RuntimeConfig, RuntimePreference};
 use kernel_builder::runtime::{detect_runtime, RuntimeKind};
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use kernel_builder::config::Config;
+use kernel_builder::db::Store;
+use kernel_builder::model::{BuildRequest, JobId, JobState};
+use kernel_builder::runtime::{BuildRuntime, RuntimeCommand, RuntimeExit};
+use kernel_builder::scheduler::Scheduler;
 
 #[test]
 fn explicit_host_native_is_selected_only_when_requested() {
@@ -30,4 +38,61 @@ fn auto_prefers_podman_before_docker() {
         detect_runtime(&config, |program| matches!(program, "podman" | "docker")).unwrap();
 
     assert_eq!(runtime, RuntimeKind::Podman);
+}
+
+#[derive(Default)]
+struct RecordingRuntime {
+    jobs: Arc<Mutex<Vec<JobId>>>,
+}
+
+#[async_trait]
+impl BuildRuntime for RecordingRuntime {
+    async fn run(
+        &self,
+        job_id: JobId,
+        _command: RuntimeCommand,
+    ) -> kernel_builder::error::Result<RuntimeExit> {
+        self.jobs.lock().unwrap().push(job_id);
+        Ok(RuntimeExit {
+            code: Some(0),
+            canceled: false,
+        })
+    }
+
+    async fn cancel(&self, _job_id: JobId) -> kernel_builder::error::Result<()> {
+        Ok(())
+    }
+}
+
+fn scheduler_request() -> BuildRequest {
+    BuildRequest {
+        source_root: "/allowed/linux".into(),
+        git_ref: None,
+        profile: None,
+        arch: "x86_64".into(),
+        config_target: "defconfig".into(),
+        config_fragments: vec![],
+        make_targets: vec!["bzImage".into()],
+        env: vec![],
+        timeout_secs: Some(60),
+        priority: 0,
+        artifact_patterns: vec![],
+    }
+}
+
+#[tokio::test]
+async fn scheduler_runs_queued_job_to_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("kbs.db")).unwrap();
+    let job = store.enqueue(scheduler_request()).unwrap();
+    let runtime = Arc::new(RecordingRuntime::default());
+    let config = Config::for_test_with_allowlist(vec!["/allowed".into()]);
+    let scheduler = Scheduler::new(config, store, runtime);
+
+    scheduler.run_one_queued_job().await.unwrap();
+
+    assert_eq!(
+        scheduler.get_job(job.id).unwrap().state,
+        JobState::Succeeded
+    );
 }
