@@ -19,7 +19,7 @@ use crate::model::{ArtifactRecord, BuildRequest, JobId, JobRecord};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlRequest {
     Status,
-    Schedule { request: BuildRequest },
+    Schedule { request: Box<BuildRequest> },
     GetJob { id: JobId },
     ListJobs,
     Cancel { id: JobId },
@@ -40,7 +40,7 @@ pub enum ControlResponse {
         id: JobId,
     },
     Job {
-        job: JobRecord,
+        job: Box<JobRecord>,
     },
     Jobs {
         jobs: Vec<JobRecord>,

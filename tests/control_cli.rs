@@ -147,7 +147,7 @@ async fn daemon_control_schedules_and_returns_job() {
 
     let response = control
         .handle(ControlRequest::Schedule {
-            request: BuildRequest {
+            request: Box::new(BuildRequest {
                 source_root: "/allowed/linux".into(),
                 git_ref: None,
                 profile: None,
@@ -159,7 +159,7 @@ async fn daemon_control_schedules_and_returns_job() {
                 timeout_secs: None,
                 priority: 0,
                 artifact_patterns: vec![],
-            },
+            }),
         })
         .await
         .unwrap();

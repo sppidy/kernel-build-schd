@@ -54,11 +54,11 @@ impl ControlHandler for DaemonControl {
             }
             ControlRequest::Schedule { request } => {
                 Policy::new(self.config.security.clone()).validate_request(&request)?;
-                let job = self.store()?.enqueue(request)?;
+                let job = self.store()?.enqueue(*request)?;
                 Ok(ControlResponse::Scheduled { id: job.id })
             }
             ControlRequest::GetJob { id } => Ok(ControlResponse::Job {
-                job: self.store()?.get_job(id)?,
+                job: Box::new(self.store()?.get_job(id)?),
             }),
             ControlRequest::ListJobs => Ok(ControlResponse::Jobs {
                 jobs: self.store()?.list_jobs()?,

@@ -138,7 +138,7 @@ impl KernelBuilderMcp {
         Parameters(input): Parameters<ScheduleKernelBuildInput>,
     ) -> String {
         self.call_control(ControlRequest::Schedule {
-            request: input.into(),
+            request: Box::new(input.into()),
         })
         .await
     }
