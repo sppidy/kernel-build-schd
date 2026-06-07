@@ -1,5 +1,7 @@
 use kernel_builder::config::{RuntimeConfig, RuntimePreference};
-use kernel_builder::runtime::{detect_runtime, RuntimeKind};
+use kernel_builder::runtime::{
+    container_command_args, detect_runtime, HostNativeRuntime, RuntimeKind,
+};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -95,4 +97,39 @@ async fn scheduler_runs_queued_job_to_success() {
         scheduler.get_job(job.id).unwrap().state,
         JobState::Succeeded
     );
+}
+
+#[test]
+fn container_command_disables_network_by_default() {
+    let args = container_command_args(
+        RuntimeKind::Podman,
+        "image:latest",
+        "/src",
+        "/out",
+        "/logs/job.log",
+        &["make".into(), "ARCH=arm64".into(), "Image".into()],
+        false,
+    )
+    .unwrap();
+
+    assert!(args.contains(&"--network=none".into()));
+    assert!(!args.iter().any(|arg| arg.contains("docker.sock")));
+}
+
+#[tokio::test]
+async fn host_native_runtime_runs_command_and_writes_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("job.log");
+    let runtime = HostNativeRuntime;
+    let command = RuntimeCommand {
+        program: "sh".into(),
+        args: vec!["-c".into(), "printf hello".into()],
+        workspace: dir.path().to_string_lossy().to_string().into(),
+        log_path: log_path.to_string_lossy().to_string().into(),
+    };
+
+    let exit = runtime.run(JobId::new(), command).await.unwrap();
+
+    assert_eq!(exit.code, Some(0));
+    assert_eq!(std::fs::read_to_string(log_path).unwrap(), "hello");
 }
