@@ -1,0 +1,28 @@
+[scheduler]
+concurrency = 1
+default_timeout_secs = 7200
+shutdown_grace_secs = 15
+
+[storage]
+database_path = "/var/lib/kernel-builder/kbs.db"
+workspace_root = "/var/lib/kernel-builder/workspaces"
+artifact_root = "/var/lib/kernel-builder/artifacts"
+log_root = "/var/log/kernel-builder/jobs"
+retention_days = 14
+
+[security]
+source_allowlist = ["/home/spidy/linux-next", "/home/spidy/projects"]
+denied_env = ["LD_PRELOAD", "LD_LIBRARY_PATH", "SSH_AUTH_SOCK", "GIT_ASKPASS"]
+max_log_read_bytes = 65536
+enable_host_native = false
+
+[runtime]
+preference = "auto"
+default_image = "ghcr.io/kernel-builder/linux-build:latest"
+network_enabled = false
+memory_limit = "16g"
+cpu_limit = "4"
+
+[mcp]
+stdio_enabled = true
+control_socket = "/run/user/1000/kernel-builder.sock"
