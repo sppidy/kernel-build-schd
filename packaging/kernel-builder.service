@@ -1,0 +1,18 @@
+[Unit]
+Description=Kernel Builder scheduler
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/kbs daemon --foreground
+Restart=on-failure
+RestartSec=2
+User=kernel-builder
+Group=kernel-builder
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/kernel-builder /var/log/kernel-builder /run/kernel-builder
+
+[Install]
+WantedBy=multi-user.target
