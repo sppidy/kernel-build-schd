@@ -197,6 +197,27 @@ impl Store {
         Ok(artifacts)
     }
 
+    pub fn count_by_state(&self, state: JobState) -> Result<u64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE state = ?1",
+            params![state_name(state)],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    pub fn list_jobs(&self) -> Result<Vec<JobRecord>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM jobs ORDER BY created_at DESC")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut jobs = Vec::new();
+        for row in rows {
+            jobs.push(self.get_job(row?.parse()?)?);
+        }
+        Ok(jobs)
+    }
+
     fn record_event(&self, id: JobId, event: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO job_events (job_id, event, created_at) VALUES (?1, ?2, ?3)",
