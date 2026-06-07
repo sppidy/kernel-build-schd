@@ -5,7 +5,7 @@ use time::OffsetDateTime;
 
 use crate::{
     error::{Error, Result},
-    model::{BuildRequest, JobId, JobRecord, JobState},
+    model::{ArtifactRecord, BuildRequest, JobId, JobRecord, JobState},
 };
 
 pub struct Store {
@@ -154,6 +154,47 @@ impl Store {
             Some(value) => Ok(Some(self.get_job(value.parse()?)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn insert_artifact(&self, artifact: &ArtifactRecord) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO artifacts (job_id, path, kind, bytes, sha256)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                artifact.job_id.to_string(),
+                artifact.path.as_str(),
+                artifact.kind.as_str(),
+                artifact.bytes as i64,
+                artifact.sha256.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_artifacts(&self, job_id: JobId) -> Result<Vec<ArtifactRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, kind, bytes, sha256 FROM artifacts WHERE job_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![job_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut artifacts = Vec::new();
+        for row in rows {
+            let (path, kind, bytes, sha256) = row?;
+            artifacts.push(ArtifactRecord {
+                job_id,
+                path: path.into(),
+                kind,
+                bytes: bytes as u64,
+                sha256,
+            });
+        }
+        Ok(artifacts)
     }
 
     fn record_event(&self, id: JobId, event: &str) -> Result<()> {
