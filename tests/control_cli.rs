@@ -9,6 +9,7 @@ use kernel_builder::daemon::DaemonControl;
 use kernel_builder::db::Store;
 use kernel_builder::error::Result;
 use kernel_builder::model::BuildRequest;
+use serde_json::json;
 
 #[test]
 fn config_file_loads_and_validates() {
@@ -148,7 +149,9 @@ async fn daemon_control_schedules_and_returns_job() {
     let response = control
         .handle(ControlRequest::Schedule {
             request: Box::new(BuildRequest {
-                source_root: "/allowed/linux".into(),
+                source_root: Some("/allowed/linux".into()),
+                source_url: None,
+                tree_name: None,
                 git_ref: None,
                 profile: None,
                 arch: "x86_64".into(),
@@ -165,4 +168,65 @@ async fn daemon_control_schedules_and_returns_job() {
         .unwrap();
 
     assert!(matches!(response, ControlResponse::Scheduled { .. }));
+}
+
+#[tokio::test]
+async fn daemon_control_registers_tree_and_schedules_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = Config::for_test_with_allowlist(vec!["/allowed".into()]);
+    config.security.clone_url_allowlist = vec!["https://github.com/spidy/".into()];
+    config.storage.database_path = dir
+        .path()
+        .join("kbs.db")
+        .to_string_lossy()
+        .to_string()
+        .into();
+    let store = Store::open(config.storage.database_path.as_std_path()).unwrap();
+    let control = DaemonControl::new_for_test(config, store);
+
+    let register: ControlRequest = serde_json::from_value(json!({
+        "type": "register_tree",
+        "tree": {
+            "name": "linux-next",
+            "source_url": "https://github.com/spidy/linux-next.git",
+            "default_ref": "main"
+        }
+    }))
+    .unwrap();
+    let response = control.handle(register).await.unwrap();
+    assert!(serde_json::to_string(&response)
+        .unwrap()
+        .contains("tree_registered"));
+
+    let request: BuildRequest = serde_json::from_value(json!({
+        "tree_name": "linux-next",
+        "arch": "arm64",
+        "config_target": "defconfig",
+        "config_fragments": [],
+        "make_targets": ["Image"],
+        "env": [],
+        "priority": 0,
+        "artifact_patterns": []
+    }))
+    .unwrap();
+    let response = control
+        .handle(ControlRequest::Schedule {
+            request: Box::new(request),
+        })
+        .await
+        .unwrap();
+
+    let id = match response {
+        ControlResponse::Scheduled { id } => id,
+        other => panic!("unexpected response: {other:?}"),
+    };
+    let response = control.handle(ControlRequest::GetJob { id }).await.unwrap();
+    let value = serde_json::to_value(response).unwrap();
+
+    assert_eq!(value["job"]["request"]["tree_name"], "linux-next");
+    assert_eq!(
+        value["job"]["request"]["source_url"],
+        "https://github.com/spidy/linux-next.git"
+    );
+    assert_eq!(value["job"]["request"]["git_ref"], "main");
 }

@@ -41,8 +41,13 @@ impl JobState {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BuildRequest {
-    #[schemars(with = "String")]
-    pub source_root: Utf8PathBuf,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub source_root: Option<Utf8PathBuf>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub tree_name: Option<String>,
     pub git_ref: Option<String>,
     pub profile: Option<String>,
     pub arch: String,
@@ -60,6 +65,27 @@ pub struct BuildRequest {
 pub struct EnvVar {
     pub key: String,
     pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TreeRegistration {
+    pub name: String,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub source_root: Option<Utf8PathBuf>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    pub default_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TreeRecord {
+    pub name: String,
+    pub source_root: Option<Utf8PathBuf>,
+    pub source_url: Option<String>,
+    pub default_ref: Option<String>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

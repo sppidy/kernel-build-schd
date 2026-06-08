@@ -72,7 +72,9 @@ impl BuildRuntime for RecordingRuntime {
 
 fn scheduler_request(source_root: String) -> BuildRequest {
     BuildRequest {
-        source_root: source_root.into(),
+        source_root: Some(source_root.into()),
+        source_url: None,
+        tree_name: None,
         git_ref: None,
         profile: None,
         arch: "x86_64".into(),

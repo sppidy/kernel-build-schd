@@ -1,11 +1,13 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use time::OffsetDateTime;
 
 use crate::{
     error::{Error, Result},
-    model::{ArtifactRecord, BuildRequest, JobId, JobRecord, JobState},
+    model::{
+        ArtifactRecord, BuildRequest, JobId, JobRecord, JobState, TreeRecord, TreeRegistration,
+    },
 };
 
 pub struct Store {
@@ -47,6 +49,19 @@ impl Store {
                 kind TEXT NOT NULL,
                 bytes INTEGER NOT NULL,
                 sha256 TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS trees (
+                name TEXT PRIMARY KEY,
+                source_root TEXT,
+                source_url TEXT,
+                default_ref TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK (
+                    (source_root IS NOT NULL AND source_url IS NULL) OR
+                    (source_root IS NULL AND source_url IS NOT NULL)
+                )
             );
             "#,
         )?;
@@ -218,6 +233,87 @@ impl Store {
         Ok(jobs)
     }
 
+    pub fn register_tree(&self, tree: TreeRegistration) -> Result<TreeRecord> {
+        let now = OffsetDateTime::now_utc();
+        let existing_created_at = self
+            .conn
+            .query_row(
+                "SELECT created_at FROM trees WHERE name = ?1",
+                params![tree.name.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        self.conn.execute(
+            "INSERT INTO trees (name, source_root, source_url, default_ref, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(name) DO UPDATE SET
+                source_root = excluded.source_root,
+                source_url = excluded.source_url,
+                default_ref = excluded.default_ref,
+                updated_at = excluded.updated_at",
+            params![
+                tree.name.as_str(),
+                tree.source_root.as_ref().map(|value| value.as_str()),
+                tree.source_url.as_deref(),
+                tree.default_ref.as_deref(),
+                existing_created_at.unwrap_or_else(|| now.unix_timestamp_nanos().to_string()),
+                now.unix_timestamp_nanos().to_string(),
+            ],
+        )?;
+        self.get_tree(&tree.name)
+    }
+
+    pub fn get_tree(&self, name: &str) -> Result<TreeRecord> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT name, source_root, source_url, default_ref, created_at, updated_at
+                 FROM trees WHERE name = ?1",
+                params![name],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .map_err(Error::from)?;
+        tree_from_row(row)
+    }
+
+    pub fn list_trees(&self) -> Result<Vec<TreeRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, source_root, source_url, default_ref, created_at, updated_at
+             FROM trees ORDER BY name ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+        let mut trees = Vec::new();
+        for row in rows {
+            trees.push(tree_from_row(row?)?);
+        }
+        Ok(trees)
+    }
+
+    pub fn remove_tree(&self, name: &str) -> Result<bool> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM trees WHERE name = ?1", params![name])?;
+        Ok(changed > 0)
+    }
+
     fn record_event(&self, id: JobId, event: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO job_events (job_id, event, created_at) VALUES (?1, ?2, ?3)",
@@ -229,6 +325,27 @@ impl Store {
         )?;
         Ok(())
     }
+}
+
+fn tree_from_row(
+    row: (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+    ),
+) -> Result<TreeRecord> {
+    let (name, source_root, source_url, default_ref, created_at, updated_at) = row;
+    Ok(TreeRecord {
+        name,
+        source_root: source_root.map(Into::into),
+        source_url,
+        default_ref,
+        created_at: parse_timestamp(&created_at)?,
+        updated_at: parse_timestamp(&updated_at)?,
+    })
 }
 
 pub(crate) fn state_name(state: JobState) -> &'static str {

@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use crate::error::{Error, Result};
-use crate::model::{ArtifactRecord, BuildRequest, JobId, JobRecord};
+use crate::model::{ArtifactRecord, BuildRequest, JobId, JobRecord, TreeRecord, TreeRegistration};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -26,6 +26,10 @@ pub enum ControlRequest {
     TailLog { id: JobId, max_bytes: usize },
     ListArtifacts { id: JobId },
     GetArtifactManifest { id: JobId },
+    RegisterTree { tree: TreeRegistration },
+    GetTree { name: String },
+    ListTrees,
+    RemoveTree { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +61,19 @@ pub enum ControlResponse {
     },
     ArtifactManifest {
         json: serde_json::Value,
+    },
+    TreeRegistered {
+        tree: TreeRecord,
+    },
+    Tree {
+        tree: TreeRecord,
+    },
+    Trees {
+        trees: Vec<TreeRecord>,
+    },
+    TreeRemoved {
+        name: String,
+        removed: bool,
     },
     Error {
         message: String,

@@ -8,7 +8,7 @@ use crate::{
     control::{serve_control_socket, ControlHandler, ControlRequest, ControlResponse},
     db::Store,
     error::{Error, Result},
-    model::JobState,
+    model::{BuildRequest, JobState, TreeRecord},
     policy::Policy,
 };
 
@@ -53,8 +53,9 @@ impl ControlHandler for DaemonControl {
                 })
             }
             ControlRequest::Schedule { request } => {
+                let request = self.resolve_build_request(*request)?;
                 Policy::new(self.config.security.clone()).validate_request(&request)?;
-                let job = self.store()?.enqueue(*request)?;
+                let job = self.store()?.enqueue(request)?;
                 Ok(ControlResponse::Scheduled { id: job.id })
             }
             ControlRequest::GetJob { id } => Ok(ControlResponse::Job {
@@ -87,7 +88,47 @@ impl ControlHandler for DaemonControl {
                     }),
                 })
             }
+            ControlRequest::RegisterTree { tree } => {
+                Policy::new(self.config.security.clone()).validate_tree_registration(&tree)?;
+                let tree = self.store()?.register_tree(tree)?;
+                Ok(ControlResponse::TreeRegistered { tree })
+            }
+            ControlRequest::GetTree { name } => Ok(ControlResponse::Tree {
+                tree: self.store()?.get_tree(&name)?,
+            }),
+            ControlRequest::ListTrees => Ok(ControlResponse::Trees {
+                trees: self.store()?.list_trees()?,
+            }),
+            ControlRequest::RemoveTree { name } => {
+                let removed = self.store()?.remove_tree(&name)?;
+                Ok(ControlResponse::TreeRemoved { name, removed })
+            }
         }
+    }
+}
+
+impl DaemonControl {
+    fn resolve_build_request(&self, mut request: BuildRequest) -> Result<BuildRequest> {
+        let Some(tree_name) = request.tree_name.clone() else {
+            return Ok(request);
+        };
+        if request.source_root.is_some() || request.source_url.is_some() {
+            return Err(Error::Policy(
+                "tree_name must not be combined with source_root or source_url".into(),
+            ));
+        }
+
+        let tree = self.store()?.get_tree(&tree_name)?;
+        apply_tree_source(&mut request, tree);
+        Ok(request)
+    }
+}
+
+fn apply_tree_source(request: &mut BuildRequest, tree: TreeRecord) {
+    request.source_root = tree.source_root;
+    request.source_url = tree.source_url;
+    if request.git_ref.is_none() {
+        request.git_ref = tree.default_ref;
     }
 }
 

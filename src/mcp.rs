@@ -8,12 +8,14 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::control::{ControlClient, ControlRequest, ControlResponse};
-use crate::model::{BuildRequest, EnvVar};
+use crate::model::{BuildRequest, EnvVar, TreeRegistration};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleKernelBuildInput {
-    #[schemars(with = "String")]
-    pub source_root: Utf8PathBuf,
+    #[schemars(with = "Option<String>")]
+    pub source_root: Option<Utf8PathBuf>,
+    pub source_url: Option<String>,
+    pub tree_name: Option<String>,
     pub git_ref: Option<String>,
     pub profile: Option<String>,
     pub arch: String,
@@ -31,6 +33,8 @@ impl From<ScheduleKernelBuildInput> for BuildRequest {
     fn from(value: ScheduleKernelBuildInput) -> Self {
         Self {
             source_root: value.source_root,
+            source_url: value.source_url,
+            tree_name: value.tree_name,
             git_ref: value.git_ref,
             profile: value.profile,
             arch: value.arch,
@@ -69,6 +73,31 @@ pub struct ListArtifactsInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GetArtifactManifestInput {
     pub job_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RegisterSourceTreeInput {
+    pub name: String,
+    #[schemars(with = "Option<String>")]
+    pub source_root: Option<Utf8PathBuf>,
+    pub source_url: Option<String>,
+    pub default_ref: Option<String>,
+}
+
+impl From<RegisterSourceTreeInput> for TreeRegistration {
+    fn from(value: RegisterSourceTreeInput) -> Self {
+        Self {
+            name: value.name,
+            source_root: value.source_root,
+            source_url: value.source_url,
+            default_ref: value.default_ref,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceTreeNameInput {
+    pub name: String,
 }
 
 #[derive(Clone)]
@@ -126,6 +155,12 @@ pub fn control_response_to_text(response: ControlResponse) -> crate::error::Resu
         }
         ControlResponse::Artifacts { artifacts } => Ok(serde_json::to_string_pretty(&artifacts)?),
         ControlResponse::ArtifactManifest { json } => Ok(serde_json::to_string_pretty(&json)?),
+        ControlResponse::TreeRegistered { tree } => Ok(serde_json::to_string_pretty(&tree)?),
+        ControlResponse::Tree { tree } => Ok(serde_json::to_string_pretty(&tree)?),
+        ControlResponse::Trees { trees } => Ok(serde_json::to_string_pretty(&trees)?),
+        ControlResponse::TreeRemoved { name, removed } => Ok(serde_json::to_string_pretty(
+            &serde_json::json!({ "name": name, "removed": removed }),
+        )?),
         ControlResponse::Error { message } => Ok(format!("error: {message}")),
     }
 }
@@ -179,6 +214,38 @@ impl KernelBuilderMcp {
     #[tool(description = "List recent builds")]
     pub async fn list_builds(&self) -> String {
         self.call_control(ControlRequest::ListJobs).await
+    }
+
+    #[tool(description = "Register or update a named source tree")]
+    pub async fn register_source_tree(
+        &self,
+        Parameters(input): Parameters<RegisterSourceTreeInput>,
+    ) -> String {
+        self.call_control(ControlRequest::RegisterTree { tree: input.into() })
+            .await
+    }
+
+    #[tool(description = "List registered source trees")]
+    pub async fn list_source_trees(&self) -> String {
+        self.call_control(ControlRequest::ListTrees).await
+    }
+
+    #[tool(description = "Get a registered source tree by name")]
+    pub async fn get_source_tree(
+        &self,
+        Parameters(input): Parameters<SourceTreeNameInput>,
+    ) -> String {
+        self.call_control(ControlRequest::GetTree { name: input.name })
+            .await
+    }
+
+    #[tool(description = "Remove a registered source tree by name")]
+    pub async fn remove_source_tree(
+        &self,
+        Parameters(input): Parameters<SourceTreeNameInput>,
+    ) -> String {
+        self.call_control(ControlRequest::RemoveTree { name: input.name })
+            .await
     }
 
     #[tool(description = "List retained artifacts for a build")]

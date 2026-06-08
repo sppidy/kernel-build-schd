@@ -5,11 +5,13 @@ use kernel_builder::mcp::{
 use kernel_builder::{control::ControlResponse, model::JobId};
 
 #[test]
-fn schedule_input_schema_contains_source_root_and_arch() {
+fn schedule_input_schema_contains_source_sources_and_arch() {
     let schema = schemars::schema_for!(ScheduleKernelBuildInput);
     let json = serde_json::to_value(schema).unwrap();
 
     assert!(json.to_string().contains("source_root"));
+    assert!(json.to_string().contains("source_url"));
+    assert!(json.to_string().contains("tree_name"));
     assert!(json.to_string().contains("arch"));
 }
 

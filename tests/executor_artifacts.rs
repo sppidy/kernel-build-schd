@@ -5,10 +5,13 @@ use kernel_builder::config::Config;
 use kernel_builder::db::Store;
 use kernel_builder::executor::{build_runtime_command, collect_artifacts, write_combined_log};
 use kernel_builder::model::BuildRequest;
+use serde_json::json;
 
 fn request_with_artifact(path: &str) -> BuildRequest {
     BuildRequest {
-        source_root: "/allowed/linux".into(),
+        source_root: Some("/allowed/linux".into()),
+        source_url: None,
+        tree_name: None,
         git_ref: None,
         profile: None,
         arch: "x86_64".into(),
@@ -91,7 +94,9 @@ fn build_command_prepares_requested_git_ref_in_job_workspace() {
     let store = Store::open(dir.path().join("kbs.db")).unwrap();
     let job = store
         .enqueue(BuildRequest {
-            source_root: source.to_string_lossy().to_string().into(),
+            source_root: Some(source.to_string_lossy().to_string().into()),
+            source_url: None,
+            tree_name: None,
             git_ref: Some("topic/build-me".into()),
             profile: None,
             arch: "arm64".into(),
@@ -117,6 +122,54 @@ fn build_command_prepares_requested_git_ref_in_job_workspace() {
     assert!(script.contains("merge_config.sh"));
     assert!(script.contains("-j10"));
     assert!(script.contains("Image"));
+}
+
+#[test]
+fn build_command_prepares_requested_git_ref_from_clone_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("custom-tree");
+    fs::create_dir(&source).unwrap();
+    run_git(&source, &["init"]);
+    run_git(
+        &source,
+        &["config", "user.email", "builder@example.invalid"],
+    );
+    run_git(&source, &["config", "user.name", "Kernel Builder"]);
+    fs::write(source.join("branch.txt"), "main").unwrap();
+    run_git(&source, &["add", "."]);
+    run_git(&source, &["commit", "-m", "main"]);
+    run_git(&source, &["checkout", "-b", "vendor/next"]);
+    fs::write(source.join("branch.txt"), "custom\n").unwrap();
+    run_git(&source, &["commit", "-am", "custom branch"]);
+
+    let store = Store::open(dir.path().join("kbs.db")).unwrap();
+    let request: BuildRequest = serde_json::from_value(json!({
+        "source_url": source.to_string_lossy(),
+        "git_ref": "vendor/next",
+        "arch": "x86_64",
+        "config_target": "defconfig",
+        "config_fragments": [],
+        "make_targets": ["bzImage"],
+        "env": [],
+        "priority": 0,
+        "artifact_patterns": []
+    }))
+    .unwrap();
+    let job = store.enqueue(request).unwrap();
+    let mut config = Config::for_test_with_allowlist(vec!["/allowed".into()]);
+    config.storage.workspace_root = dir
+        .path()
+        .join("workspaces")
+        .to_string_lossy()
+        .to_string()
+        .into();
+
+    let command = build_runtime_command(&config, &job).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(command.source_root.join("branch.txt")).unwrap(),
+        "custom\n"
+    );
 }
 
 fn run_git(repo: &std::path::Path, args: &[&str]) {

@@ -1,4 +1,4 @@
-use kernel_builder::model::{JobId, JobState};
+use kernel_builder::model::{JobId, JobState, TreeRegistration};
 use kernel_builder::{
     db::Store,
     model::{BuildRequest, JobState as StoredJobState},
@@ -20,7 +20,9 @@ fn generated_job_ids_are_prefixed_and_parseable() {
 
 fn build_request() -> BuildRequest {
     BuildRequest {
-        source_root: "/allowed/linux".into(),
+        source_root: Some("/allowed/linux".into()),
+        source_url: None,
+        tree_name: None,
         git_ref: Some("HEAD".into()),
         profile: Some("x86_64-defconfig".into()),
         arch: "x86_64".into(),
@@ -64,4 +66,34 @@ fn store_records_state_transition_events() {
     assert_eq!(events.len(), 3);
     assert!(events[0].contains("queued"));
     assert!(events[2].contains("running"));
+}
+
+#[test]
+fn store_persists_registered_tree_across_reopen_and_removes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("kbs.db");
+
+    {
+        let store = Store::open(&db_path).unwrap();
+        store
+            .register_tree(TreeRegistration {
+                name: "linux-next".into(),
+                source_root: None,
+                source_url: Some("https://github.com/spidy/linux-next.git".into()),
+                default_ref: Some("main".into()),
+            })
+            .unwrap();
+    }
+
+    let reopened = Store::open(&db_path).unwrap();
+    let tree = reopened.get_tree("linux-next").unwrap();
+
+    assert_eq!(tree.name, "linux-next");
+    assert_eq!(
+        tree.source_url,
+        Some("https://github.com/spidy/linux-next.git".into())
+    );
+    assert_eq!(reopened.list_trees().unwrap().len(), 1);
+    assert!(reopened.remove_tree("linux-next").unwrap());
+    assert!(reopened.list_trees().unwrap().is_empty());
 }

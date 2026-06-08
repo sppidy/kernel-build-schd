@@ -42,6 +42,8 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     pub source_allowlist: Vec<Utf8PathBuf>,
+    #[serde(default)]
+    pub clone_url_allowlist: Vec<String>,
     pub denied_env: Vec<String>,
     pub max_log_read_bytes: usize,
     pub enable_host_native: bool,
@@ -79,6 +81,7 @@ impl Config {
             },
             security: SecurityConfig {
                 source_allowlist,
+                clone_url_allowlist: vec![],
                 denied_env: vec![
                     "LD_PRELOAD".into(),
                     "LD_LIBRARY_PATH".into(),

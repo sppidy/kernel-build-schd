@@ -12,6 +12,7 @@ retention_days = 14
 
 [security]
 source_allowlist = ["/home/spidy/linux-next", "/home/spidy/projects"]
+clone_url_allowlist = ["https://github.com/", "git@github.com:", "ssh://git@github.com/"]
 denied_env = ["LD_PRELOAD", "LD_LIBRARY_PATH", "SSH_AUTH_SOCK", "GIT_ASKPASS"]
 max_log_read_bytes = 65536
 enable_host_native = false

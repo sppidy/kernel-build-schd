@@ -21,7 +21,7 @@ pub fn build_runtime_command(config: &Config, job: &JobRecord) -> Result<Runtime
     let source_root = job_root.join("source");
     let output_root = job_root.join("output");
     prepare_source_checkout(
-        &job.request.source_root,
+        source_location(&job.request)?,
         job.request.git_ref.as_deref(),
         &source_root,
     )?;
@@ -37,12 +37,18 @@ pub fn build_runtime_command(config: &Config, job: &JobRecord) -> Result<Runtime
     })
 }
 
-fn prepare_source_checkout(
-    source_root: &Utf8Path,
-    git_ref: Option<&str>,
-    dest: &Utf8Path,
-) -> Result<()> {
-    let commit = resolve_commit(source_root, git_ref.unwrap_or("HEAD"))?;
+fn source_location(request: &crate::model::BuildRequest) -> Result<&str> {
+    match (&request.source_root, &request.source_url) {
+        (Some(source_root), None) => Ok(source_root.as_str()),
+        (None, Some(source_url)) => Ok(source_url.as_str()),
+        (Some(_), Some(_)) => Err(Error::Config(
+            "request must not include both source_root and source_url".into(),
+        )),
+        (None, None) => Err(Error::Config("request has no resolved source".into())),
+    }
+}
+
+fn prepare_source_checkout(source: &str, git_ref: Option<&str>, dest: &Utf8Path) -> Result<()> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent.as_std_path())?;
     }
@@ -54,9 +60,10 @@ fn prepare_source_checkout(
             .arg("clone")
             .arg("--no-hardlinks")
             .arg("--no-checkout")
-            .arg(source_root.as_str())
+            .arg(source)
             .arg(dest.as_str()),
     )?;
+    let commit = resolve_commit(dest, git_ref.unwrap_or("HEAD"))?;
     run_command(
         Command::new("git")
             .arg("-C")
@@ -69,14 +76,28 @@ fn prepare_source_checkout(
 }
 
 fn resolve_commit(source_root: &Utf8Path, git_ref: &str) -> Result<String> {
-    run_command(
-        Command::new("git")
-            .arg("-C")
-            .arg(source_root.as_str())
-            .arg("rev-parse")
-            .arg("--verify")
-            .arg(format!("{git_ref}^{{commit}}")),
-    )
+    let mut candidates = vec![git_ref.to_string()];
+    if !git_ref.starts_with("refs/") {
+        candidates.push(format!("refs/remotes/origin/{git_ref}"));
+        candidates.push(format!("refs/heads/{git_ref}"));
+        candidates.push(format!("refs/tags/{git_ref}"));
+    }
+
+    let mut last_error = None;
+    for candidate in candidates {
+        match run_command(
+            Command::new("git")
+                .arg("-C")
+                .arg(source_root.as_str())
+                .arg("rev-parse")
+                .arg("--verify")
+                .arg(format!("{candidate}^{{commit}}")),
+        ) {
+            Ok(commit) => return Ok(commit),
+            Err(err) => last_error = Some(err),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| Error::Runtime("no git ref candidates".into())))
 }
 
 fn build_script(request: &crate::model::BuildRequest) -> Result<String> {
@@ -94,7 +115,10 @@ fn build_script(request: &crate::model::BuildRequest) -> Result<String> {
             "\"$KBS_OUTPUT_DIR/.config\"".to_string(),
         ];
         for fragment in &request.config_fragments {
-            merge.push(source_fragment_arg(&request.source_root, fragment)?);
+            merge.push(source_fragment_arg(
+                request.source_root.as_deref(),
+                fragment,
+            )?);
         }
         lines.push(merge.join(" "));
         lines.push(make_line(&request.arch, &["olddefconfig"]));
@@ -121,8 +145,11 @@ fn make_line(arch: &str, targets: &[&str]) -> String {
     parts.join(" ")
 }
 
-fn source_fragment_arg(source_root: &Utf8Path, fragment: &Utf8Path) -> Result<String> {
+fn source_fragment_arg(source_root: Option<&Utf8Path>, fragment: &Utf8Path) -> Result<String> {
     let relative = if fragment.is_absolute() {
+        let source_root = source_root.ok_or_else(|| {
+            Error::Config("absolute config fragments require a local source_root".into())
+        })?;
         fragment.strip_prefix(source_root).map_err(|_| {
             Error::Config(format!(
                 "config fragment {fragment} is outside source root {source_root}"
