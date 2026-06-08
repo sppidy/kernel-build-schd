@@ -92,15 +92,18 @@ EOF
 }
 
 build_rpm() {
-    local top source_dir spec
+    local top source_dir spec changelog_date
     top="$work_dir/rpmbuild"
     source_dir="$work_dir/kernel-builder-${version}"
     spec="$top/SPECS/kernel-builder.spec"
+    changelog_date="$(LC_ALL=C date -u '+%a %b %d %Y')"
     mkdir -p "$top/BUILD" "$top/RPMS" "$top/SOURCES" "$top/SPECS" "$top/SRPMS"
     mkdir -p "$source_dir"
     cp -a "$pkg_root"/. "$source_dir"/
     tar -C "$work_dir" -czf "$top/SOURCES/kernel-builder-${version}.tar.gz" "kernel-builder-${version}"
     cat >"$spec" <<EOF
+%global debug_package %{nil}
+
 Name: kernel-builder
 Version: ${version}
 Release: ${release}%{?dist}
@@ -129,6 +132,10 @@ cp -a . %{buildroot}/
 /usr/lib/systemd/system/kernel-builder.service
 /usr/lib/systemd/user/kernel-builder-user.service
 %doc /usr/share/doc/kernel-builder/README.md
+
+%changelog
+* ${changelog_date} Kernel Builder Maintainers <noreply@example.invalid> - ${version}-${release}
+- Build CI package artifact
 EOF
     rpmbuild -bb --define "_topdir $top" "$spec"
     find "$top/RPMS" -type f -name '*.rpm' -exec cp {} "$out_dir/" \;
