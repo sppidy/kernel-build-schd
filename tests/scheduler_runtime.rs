@@ -138,6 +138,7 @@ fn container_command_disables_network_by_default() {
 
     assert!(args.contains(&"--network=none".into()));
     assert!(!args.iter().any(|arg| arg.contains("docker.sock")));
+    assert!(!args.iter().any(|arg| arg.contains("/logs/job.log")));
 }
 
 #[test]

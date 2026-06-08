@@ -98,8 +98,6 @@ pub fn container_command_args(spec: ContainerCommandSpec<'_>) -> Result<Vec<Stri
                 format!("{}:/src:ro", spec.source_root),
                 "-v".into(),
                 format!("{}:/out:rw", spec.output_root),
-                "-v".into(),
-                format!("{}:/logs/job.log:rw", spec.log_path),
                 "-w".into(),
                 "/src".into(),
                 spec.image.into(),
