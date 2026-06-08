@@ -37,7 +37,6 @@ pub struct ContainerCommandSpec<'a> {
     pub image: &'a str,
     pub source_root: &'a str,
     pub output_root: &'a str,
-    pub log_path: &'a str,
     pub build_command: &'a [String],
     pub network_enabled: bool,
     pub memory_limit: Option<&'a str>,
@@ -95,9 +94,17 @@ pub fn container_command_args(spec: ContainerCommandSpec<'_>) -> Result<Vec<Stri
             ]);
             args.extend([
                 "-v".into(),
-                format!("{}:/src:ro", spec.source_root),
+                format!(
+                    "{}:/src:{}",
+                    spec.source_root,
+                    source_mount_options(spec.kind)
+                ),
                 "-v".into(),
-                format!("{}:/out:rw", spec.output_root),
+                format!(
+                    "{}:/out:{}",
+                    spec.output_root,
+                    output_mount_options(spec.kind)
+                ),
                 "-w".into(),
                 "/src".into(),
                 spec.image.into(),
@@ -108,6 +115,22 @@ pub fn container_command_args(spec: ContainerCommandSpec<'_>) -> Result<Vec<Stri
         RuntimeKind::HostNative => Err(Error::Runtime(
             "container args are not valid for host-native runtime".into(),
         )),
+    }
+}
+
+fn source_mount_options(kind: RuntimeKind) -> &'static str {
+    match kind {
+        RuntimeKind::Podman => "ro,Z",
+        RuntimeKind::Docker => "ro",
+        RuntimeKind::HostNative => unreachable!("host-native runtime does not use OCI mounts"),
+    }
+}
+
+fn output_mount_options(kind: RuntimeKind) -> &'static str {
+    match kind {
+        RuntimeKind::Podman => "rw,Z",
+        RuntimeKind::Docker => "rw",
+        RuntimeKind::HostNative => unreachable!("host-native runtime does not use OCI mounts"),
     }
 }
 
@@ -173,7 +196,6 @@ impl BuildRuntime for OciRuntime {
             image: &self.image,
             source_root: command.source_root.as_str(),
             output_root: command.output_root.as_str(),
-            log_path: command.log_path.as_str(),
             build_command: &build_command,
             network_enabled: self.network_enabled,
             memory_limit: self.memory_limit.as_deref(),

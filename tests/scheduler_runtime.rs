@@ -128,7 +128,6 @@ fn container_command_disables_network_by_default() {
         image: "image:latest",
         source_root: "/src",
         output_root: "/out",
-        log_path: "/logs/job.log",
         build_command: &build_command,
         network_enabled: false,
         memory_limit: None,
@@ -139,6 +138,8 @@ fn container_command_disables_network_by_default() {
     assert!(args.contains(&"--network=none".into()));
     assert!(!args.iter().any(|arg| arg.contains("docker.sock")));
     assert!(!args.iter().any(|arg| arg.contains("/logs/job.log")));
+    assert!(args.contains(&"/src:/src:ro,Z".into()));
+    assert!(args.contains(&"/out:/out:rw,Z".into()));
 }
 
 #[test]
@@ -149,7 +150,6 @@ fn container_command_applies_resource_limits() {
         image: "image:latest",
         source_root: "/src",
         output_root: "/out",
-        log_path: "/logs/job.log",
         build_command: &build_command,
         network_enabled: false,
         memory_limit: Some("16g"),
@@ -159,6 +159,25 @@ fn container_command_applies_resource_limits() {
 
     assert!(args.contains(&"--memory=16g".into()));
     assert!(args.contains(&"--cpus=10".into()));
+}
+
+#[test]
+fn docker_container_mounts_do_not_use_podman_relabel_options() {
+    let build_command = ["make".into(), "bzImage".into()];
+    let args = container_command_args(ContainerCommandSpec {
+        kind: RuntimeKind::Docker,
+        image: "image:latest",
+        source_root: "/src",
+        output_root: "/out",
+        build_command: &build_command,
+        network_enabled: false,
+        memory_limit: None,
+        cpu_limit: None,
+    })
+    .unwrap();
+
+    assert!(args.contains(&"/src:/src:ro".into()));
+    assert!(args.contains(&"/out:/out:rw".into()));
 }
 
 #[tokio::test]
