@@ -79,7 +79,7 @@ Priority: optional
 Architecture: ${package_arch}
 Maintainer: Kernel Builder Maintainers <noreply@example.invalid>
 Installed-Size: ${installed_size}
-Depends: libc6
+Depends: libc6, git
 Description: Single-machine Linux kernel build scheduler
  Kernel Builder provides a local daemon, SQLite queue, CLI administration,
  container workers, and an MCP stdio adapter for scheduling Linux kernel builds.
@@ -112,6 +112,7 @@ License: NOASSERTION
 URL: https://github.com/sppidy/kernel-build-schd
 Source0: %{name}-%{version}.tar.gz
 Requires: glibc
+Requires: git
 
 %description
 Kernel Builder provides a local daemon, SQLite queue, CLI administration,
@@ -161,6 +162,7 @@ size = ${size}
 arch = ${package_arch}
 license = custom
 depend = glibc
+depend = git
 backup = etc/kernel-build-scheduler/config.toml
 EOF
     if command -v bsdtar >/dev/null 2>&1; then

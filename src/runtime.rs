@@ -20,7 +20,8 @@ pub enum RuntimeKind {
 pub struct RuntimeCommand {
     pub program: String,
     pub args: Vec<String>,
-    pub workspace: Utf8PathBuf,
+    pub source_root: Utf8PathBuf,
+    pub output_root: Utf8PathBuf,
     pub log_path: Utf8PathBuf,
 }
 
@@ -87,6 +88,12 @@ pub fn container_command_args(spec: ContainerCommandSpec<'_>) -> Result<Vec<Stri
                 args.push(format!("--cpus={limit}"));
             }
             args.extend([
+                "-e".into(),
+                "KBS_SOURCE_DIR=/src".into(),
+                "-e".into(),
+                "KBS_OUTPUT_DIR=/out".into(),
+            ]);
+            args.extend([
                 "-v".into(),
                 format!("{}:/src:ro", spec.source_root),
                 "-v".into(),
@@ -114,9 +121,12 @@ impl BuildRuntime for HostNativeRuntime {
         if let Some(parent) = std::path::Path::new(command.log_path.as_str()).parent() {
             fs::create_dir_all(parent)?;
         }
+        fs::create_dir_all(command.output_root.as_std_path())?;
         let output = Command::new(&command.program)
             .args(&command.args)
-            .current_dir(command.workspace.as_str())
+            .env("KBS_SOURCE_DIR", command.source_root.as_str())
+            .env("KBS_OUTPUT_DIR", command.output_root.as_str())
+            .current_dir(command.source_root.as_str())
             .stdin(Stdio::null())
             .output()
             .await?;
@@ -156,14 +166,15 @@ impl BuildRuntime for OciRuntime {
         if let Some(parent) = std::path::Path::new(command.log_path.as_str()).parent() {
             fs::create_dir_all(parent)?;
         }
+        fs::create_dir_all(command.output_root.as_std_path())?;
         let build_command = std::iter::once(command.program.clone())
             .chain(command.args.clone())
             .collect::<Vec<_>>();
         let args = container_command_args(ContainerCommandSpec {
             kind: self.kind,
             image: &self.image,
-            source_root: command.workspace.as_str(),
-            output_root: command.workspace.as_str(),
+            source_root: command.source_root.as_str(),
+            output_root: command.output_root.as_str(),
             log_path: command.log_path.as_str(),
             build_command: &build_command,
             network_enabled: self.network_enabled,

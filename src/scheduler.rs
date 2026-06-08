@@ -4,7 +4,7 @@ use crate::{
     config::Config,
     db::Store,
     error::Result,
-    executor::build_runtime_command,
+    executor::{build_runtime_command, collect_artifacts},
     model::{JobId, JobRecord, JobState},
     runtime::BuildRuntime,
 };
@@ -35,6 +35,7 @@ impl Scheduler {
 
         self.store.set_state(job.id, JobState::Preparing)?;
         let command = build_runtime_command(&self.config, &job)?;
+        let output_root = command.output_root.clone();
         self.store.set_state(job.id, JobState::Running)?;
         let exit = self.runtime.run(job.id, command).await?;
         self.store.set_state(job.id, JobState::Collecting)?;
@@ -42,6 +43,7 @@ impl Scheduler {
         if exit.canceled {
             self.store.set_state(job.id, JobState::Canceled)?;
         } else if exit.code == Some(0) {
+            collect_artifacts(&self.config, &self.store, job.id, output_root.as_std_path())?;
             self.store.set_state(job.id, JobState::Succeeded)?;
         } else {
             self.store.set_state(job.id, JobState::Failed)?;

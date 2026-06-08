@@ -2,9 +2,10 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    process::Command,
 };
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -16,12 +17,146 @@ use crate::{
 };
 
 pub fn build_runtime_command(config: &Config, job: &JobRecord) -> Result<RuntimeCommand> {
+    let job_root = config.storage.workspace_root.join(job.id.to_string());
+    let source_root = job_root.join("source");
+    let output_root = job_root.join("output");
+    prepare_source_checkout(
+        &job.request.source_root,
+        job.request.git_ref.as_deref(),
+        &source_root,
+    )?;
+    fs::create_dir_all(output_root.as_std_path())?;
+    let script = build_script(&job.request)?;
+
     Ok(RuntimeCommand {
-        program: "make".into(),
-        args: job.request.make_targets.clone(),
-        workspace: config.storage.workspace_root.join(job.id.to_string()),
+        program: "sh".into(),
+        args: vec!["-c".into(), script],
+        source_root,
+        output_root,
         log_path: config.storage.log_root.join(format!("{}.log", job.id)),
     })
+}
+
+fn prepare_source_checkout(
+    source_root: &Utf8Path,
+    git_ref: Option<&str>,
+    dest: &Utf8Path,
+) -> Result<()> {
+    let commit = resolve_commit(source_root, git_ref.unwrap_or("HEAD"))?;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent.as_std_path())?;
+    }
+    if dest.as_std_path().exists() {
+        fs::remove_dir_all(dest.as_std_path())?;
+    }
+    run_command(
+        Command::new("git")
+            .arg("clone")
+            .arg("--no-hardlinks")
+            .arg("--no-checkout")
+            .arg(source_root.as_str())
+            .arg(dest.as_str()),
+    )?;
+    run_command(
+        Command::new("git")
+            .arg("-C")
+            .arg(dest.as_str())
+            .arg("checkout")
+            .arg("--detach")
+            .arg(commit.trim()),
+    )?;
+    Ok(())
+}
+
+fn resolve_commit(source_root: &Utf8Path, git_ref: &str) -> Result<String> {
+    run_command(
+        Command::new("git")
+            .arg("-C")
+            .arg(source_root.as_str())
+            .arg("rev-parse")
+            .arg("--verify")
+            .arg(format!("{git_ref}^{{commit}}")),
+    )
+}
+
+fn build_script(request: &crate::model::BuildRequest) -> Result<String> {
+    let mut lines = vec![
+        "set -eu".to_string(),
+        make_line(&request.arch, &[request.config_target.as_str()]),
+    ];
+
+    if !request.config_fragments.is_empty() {
+        let mut merge = vec![
+            "\"$KBS_SOURCE_DIR\"/scripts/kconfig/merge_config.sh".to_string(),
+            "-m".to_string(),
+            "-O".to_string(),
+            "\"$KBS_OUTPUT_DIR\"".to_string(),
+            "\"$KBS_OUTPUT_DIR/.config\"".to_string(),
+        ];
+        for fragment in &request.config_fragments {
+            merge.push(source_fragment_arg(&request.source_root, fragment)?);
+        }
+        lines.push(merge.join(" "));
+        lines.push(make_line(&request.arch, &["olddefconfig"]));
+    }
+
+    let targets = request
+        .make_targets
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    lines.push(make_line(&request.arch, &targets));
+    Ok(lines.join("\n"))
+}
+
+fn make_line(arch: &str, targets: &[&str]) -> String {
+    let mut parts = vec![
+        "make".to_string(),
+        "-C".to_string(),
+        "\"$KBS_SOURCE_DIR\"".to_string(),
+        "O=\"$KBS_OUTPUT_DIR\"".to_string(),
+        format!("ARCH={}", shell_quote(arch)),
+    ];
+    parts.extend(targets.iter().map(|target| shell_quote(target)));
+    parts.join(" ")
+}
+
+fn source_fragment_arg(source_root: &Utf8Path, fragment: &Utf8Path) -> Result<String> {
+    let relative = if fragment.is_absolute() {
+        fragment.strip_prefix(source_root).map_err(|_| {
+            Error::Config(format!(
+                "config fragment {fragment} is outside source root {source_root}"
+            ))
+        })?
+    } else {
+        fragment
+    };
+
+    let relative = relative.as_str();
+    if relative == ".." || relative.starts_with("../") || relative.contains("/../") {
+        return Err(Error::Config(format!(
+            "config fragment {fragment} must stay inside source root"
+        )));
+    }
+    Ok(format!("\"$KBS_SOURCE_DIR\"/{}", shell_quote(relative)))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn run_command(command: &mut Command) -> Result<String> {
+    let output = command.output()?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    }
+
+    Err(Error::Runtime(format!(
+        "command {:?} failed: {}{}",
+        command,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )))
 }
 
 pub fn write_combined_log(path: impl AsRef<Path>, bytes: &[u8]) -> Result<()> {

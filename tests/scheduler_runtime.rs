@@ -2,7 +2,11 @@ use kernel_builder::config::{RuntimeConfig, RuntimePreference};
 use kernel_builder::runtime::{
     container_command_args, detect_runtime, ContainerCommandSpec, HostNativeRuntime, RuntimeKind,
 };
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    process::Command,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use kernel_builder::config::Config;
@@ -66,9 +70,9 @@ impl BuildRuntime for RecordingRuntime {
     }
 }
 
-fn scheduler_request() -> BuildRequest {
+fn scheduler_request(source_root: String) -> BuildRequest {
     BuildRequest {
-        source_root: "/allowed/linux".into(),
+        source_root: source_root.into(),
         git_ref: None,
         profile: None,
         arch: "x86_64".into(),
@@ -85,10 +89,27 @@ fn scheduler_request() -> BuildRequest {
 #[tokio::test]
 async fn scheduler_runs_queued_job_to_success() {
     let dir = tempfile::tempdir().unwrap();
+    let source = init_source_repo(dir.path().join("linux").as_path());
     let store = Store::open(dir.path().join("kbs.db")).unwrap();
-    let job = store.enqueue(scheduler_request()).unwrap();
+    let job = store
+        .enqueue(scheduler_request(source.to_string_lossy().to_string()))
+        .unwrap();
     let runtime = Arc::new(RecordingRuntime::default());
-    let config = Config::for_test_with_allowlist(vec!["/allowed".into()]);
+    let mut config =
+        Config::for_test_with_allowlist(vec![source.to_string_lossy().to_string().into()]);
+    config.storage.workspace_root = dir
+        .path()
+        .join("workspaces")
+        .to_string_lossy()
+        .to_string()
+        .into();
+    config.storage.artifact_root = dir
+        .path()
+        .join("artifacts")
+        .to_string_lossy()
+        .to_string()
+        .into();
+    config.storage.log_root = dir.path().join("logs").to_string_lossy().to_string().into();
     let scheduler = Scheduler::new(config, store, runtime);
 
     scheduler.run_one_queued_job().await.unwrap();
@@ -147,7 +168,8 @@ async fn host_native_runtime_runs_command_and_writes_log() {
     let command = RuntimeCommand {
         program: "sh".into(),
         args: vec!["-c".into(), "printf hello".into()],
-        workspace: dir.path().to_string_lossy().to_string().into(),
+        source_root: dir.path().to_string_lossy().to_string().into(),
+        output_root: dir.path().join("out").to_string_lossy().to_string().into(),
         log_path: log_path.to_string_lossy().to_string().into(),
     };
 
@@ -155,4 +177,30 @@ async fn host_native_runtime_runs_command_and_writes_log() {
 
     assert_eq!(exit.code, Some(0));
     assert_eq!(std::fs::read_to_string(log_path).unwrap(), "hello");
+}
+
+fn init_source_repo(path: &std::path::Path) -> std::path::PathBuf {
+    fs::create_dir(path).unwrap();
+    run_git(path, &["init"]);
+    run_git(path, &["config", "user.email", "builder@example.invalid"]);
+    run_git(path, &["config", "user.name", "Kernel Builder"]);
+    fs::write(path.join("Makefile"), "all:\n\t@true\n").unwrap();
+    run_git(path, &["add", "."]);
+    run_git(path, &["commit", "-m", "init"]);
+    path.to_path_buf()
+}
+
+fn run_git(repo: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
