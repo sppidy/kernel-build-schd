@@ -16,7 +16,7 @@ env:
 jobs:
   package:
     name: ${{ matrix.distro }} ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -24,41 +24,42 @@ jobs:
           - distro: ubuntu
             arch: x86_64
             package_arch: amd64
+            runner: ubuntu-24.04
             platform: linux/amd64
             image: ubuntu:24.04
           - distro: ubuntu
             arch: arm64
             package_arch: arm64
+            runner: ubuntu-24.04-arm
             platform: linux/arm64
             image: ubuntu:24.04
           - distro: fedora
             arch: x86_64
             package_arch: x86_64
+            runner: ubuntu-24.04
             platform: linux/amd64
             image: fedora:latest
           - distro: fedora
             arch: arm64
             package_arch: aarch64
+            runner: ubuntu-24.04-arm
             platform: linux/arm64
             image: fedora:latest
           - distro: arch
             arch: x86_64
             package_arch: x86_64
+            runner: ubuntu-24.04
             platform: linux/amd64
             image: archlinux:latest
           - distro: arch
             arch: arm64
             package_arch: aarch64
+            runner: ubuntu-24.04-arm
             platform: linux/arm64
             image: menci/archlinuxarm:base-devel
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: amd64,arm64
 
       - name: Build package
         run: |

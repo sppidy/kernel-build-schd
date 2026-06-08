@@ -30,6 +30,19 @@ pub struct RuntimeExit {
     pub canceled: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ContainerCommandSpec<'a> {
+    pub kind: RuntimeKind,
+    pub image: &'a str,
+    pub source_root: &'a str,
+    pub output_root: &'a str,
+    pub log_path: &'a str,
+    pub build_command: &'a [String],
+    pub network_enabled: bool,
+    pub memory_limit: Option<&'a str>,
+    pub cpu_limit: Option<&'a str>,
+}
+
 #[async_trait]
 pub trait BuildRuntime: Send + Sync {
     async fn run(&self, job_id: JobId, command: RuntimeCommand) -> Result<RuntimeExit>;
@@ -60,33 +73,31 @@ pub fn detect_runtime(
     }
 }
 
-pub fn container_command_args(
-    kind: RuntimeKind,
-    image: &str,
-    source_root: &str,
-    output_root: &str,
-    log_path: &str,
-    build_command: &[String],
-    network_enabled: bool,
-) -> Result<Vec<String>> {
-    match kind {
+pub fn container_command_args(spec: ContainerCommandSpec<'_>) -> Result<Vec<String>> {
+    match spec.kind {
         RuntimeKind::Podman | RuntimeKind::Docker => {
             let mut args = vec!["run".into(), "--rm".into()];
-            if !network_enabled {
+            if !spec.network_enabled {
                 args.push("--network=none".into());
+            }
+            if let Some(limit) = spec.memory_limit {
+                args.push(format!("--memory={limit}"));
+            }
+            if let Some(limit) = spec.cpu_limit {
+                args.push(format!("--cpus={limit}"));
             }
             args.extend([
                 "-v".into(),
-                format!("{source_root}:/src:ro"),
+                format!("{}:/src:ro", spec.source_root),
                 "-v".into(),
-                format!("{output_root}:/out:rw"),
+                format!("{}:/out:rw", spec.output_root),
                 "-v".into(),
-                format!("{log_path}:/logs/job.log:rw"),
+                format!("{}:/logs/job.log:rw", spec.log_path),
                 "-w".into(),
                 "/src".into(),
-                image.into(),
+                spec.image.into(),
             ]);
-            args.extend(build_command.iter().cloned());
+            args.extend(spec.build_command.iter().cloned());
             Ok(args)
         }
         RuntimeKind::HostNative => Err(Error::Runtime(
@@ -128,6 +139,8 @@ pub struct OciRuntime {
     pub kind: RuntimeKind,
     pub image: String,
     pub network_enabled: bool,
+    pub memory_limit: Option<String>,
+    pub cpu_limit: Option<String>,
 }
 
 #[async_trait]
@@ -146,15 +159,17 @@ impl BuildRuntime for OciRuntime {
         let build_command = std::iter::once(command.program.clone())
             .chain(command.args.clone())
             .collect::<Vec<_>>();
-        let args = container_command_args(
-            self.kind,
-            &self.image,
-            command.workspace.as_str(),
-            command.workspace.as_str(),
-            command.log_path.as_str(),
-            &build_command,
-            self.network_enabled,
-        )?;
+        let args = container_command_args(ContainerCommandSpec {
+            kind: self.kind,
+            image: &self.image,
+            source_root: command.workspace.as_str(),
+            output_root: command.workspace.as_str(),
+            log_path: command.log_path.as_str(),
+            build_command: &build_command,
+            network_enabled: self.network_enabled,
+            memory_limit: self.memory_limit.as_deref(),
+            cpu_limit: self.cpu_limit.as_deref(),
+        })?;
         let output = Command::new(runtime_program).args(args).output().await?;
         let mut log = tokio::fs::File::create(command.log_path.as_str()).await?;
         log.write_all(&output.stdout).await?;
@@ -188,6 +203,8 @@ pub fn runtime_from_config(config: &Config) -> Result<Arc<dyn BuildRuntime>> {
             kind,
             image: config.runtime.default_image.clone(),
             network_enabled: config.runtime.network_enabled,
+            memory_limit: config.runtime.memory_limit.clone(),
+            cpu_limit: config.runtime.cpu_limit.clone(),
         })),
     }
 }

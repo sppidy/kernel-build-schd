@@ -1,6 +1,6 @@
 use kernel_builder::config::{RuntimeConfig, RuntimePreference};
 use kernel_builder::runtime::{
-    container_command_args, detect_runtime, HostNativeRuntime, RuntimeKind,
+    container_command_args, detect_runtime, ContainerCommandSpec, HostNativeRuntime, RuntimeKind,
 };
 use std::sync::{Arc, Mutex};
 
@@ -101,19 +101,42 @@ async fn scheduler_runs_queued_job_to_success() {
 
 #[test]
 fn container_command_disables_network_by_default() {
-    let args = container_command_args(
-        RuntimeKind::Podman,
-        "image:latest",
-        "/src",
-        "/out",
-        "/logs/job.log",
-        &["make".into(), "ARCH=arm64".into(), "Image".into()],
-        false,
-    )
+    let build_command = ["make".into(), "ARCH=arm64".into(), "Image".into()];
+    let args = container_command_args(ContainerCommandSpec {
+        kind: RuntimeKind::Podman,
+        image: "image:latest",
+        source_root: "/src",
+        output_root: "/out",
+        log_path: "/logs/job.log",
+        build_command: &build_command,
+        network_enabled: false,
+        memory_limit: None,
+        cpu_limit: None,
+    })
     .unwrap();
 
     assert!(args.contains(&"--network=none".into()));
     assert!(!args.iter().any(|arg| arg.contains("docker.sock")));
+}
+
+#[test]
+fn container_command_applies_resource_limits() {
+    let build_command = ["make".into(), "-j10".into(), "bzImage".into()];
+    let args = container_command_args(ContainerCommandSpec {
+        kind: RuntimeKind::Podman,
+        image: "image:latest",
+        source_root: "/src",
+        output_root: "/out",
+        log_path: "/logs/job.log",
+        build_command: &build_command,
+        network_enabled: false,
+        memory_limit: Some("16g"),
+        cpu_limit: Some("10"),
+    })
+    .unwrap();
+
+    assert!(args.contains(&"--memory=16g".into()));
+    assert!(args.contains(&"--cpus=10".into()));
 }
 
 #[tokio::test]
