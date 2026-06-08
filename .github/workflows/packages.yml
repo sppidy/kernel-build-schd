@@ -1,0 +1,80 @@
+name: Packages
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: ${{ matrix.distro }} ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu
+            arch: x86_64
+            package_arch: amd64
+            platform: linux/amd64
+            image: ubuntu:24.04
+          - distro: ubuntu
+            arch: arm64
+            package_arch: arm64
+            platform: linux/arm64
+            image: ubuntu:24.04
+          - distro: fedora
+            arch: x86_64
+            package_arch: x86_64
+            platform: linux/amd64
+            image: fedora:latest
+          - distro: fedora
+            arch: arm64
+            package_arch: aarch64
+            platform: linux/arm64
+            image: fedora:latest
+          - distro: arch
+            arch: x86_64
+            package_arch: x86_64
+            platform: linux/amd64
+            image: archlinux:latest
+          - distro: arch
+            arch: arm64
+            package_arch: aarch64
+            platform: linux/arm64
+            image: menci/archlinuxarm:base-devel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: amd64,arm64
+
+      - name: Build package
+        run: |
+          docker run --rm \
+            --platform "${{ matrix.platform }}" \
+            -e PACKAGE_DISTRO="${{ matrix.distro }}" \
+            -e PACKAGE_ARCH="${{ matrix.package_arch }}" \
+            -e ARTIFACT_ARCH="${{ matrix.arch }}" \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            "${{ matrix.image }}" \
+            bash packaging/ci/build-package.sh
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-builder-${{ matrix.distro }}-${{ matrix.arch }}
+          path: artifacts/packages/${{ matrix.distro }}-${{ matrix.arch }}/*
+          if-no-files-found: error
